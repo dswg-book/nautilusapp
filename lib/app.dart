@@ -2,53 +2,67 @@ import 'dart:developer';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'servers/model.dart';
 
-class App extends StatefulWidget {
+class App extends ConsumerWidget {
   const App({super.key});
 
   @override
-  State<StatefulWidget> createState() => _AppState();
-}
+  Widget build(BuildContext context, WidgetRef ref) {
+    final _ = ref.watch(serverProvider);
+    final server = ref.watch(serverProvider.notifier);
+    log('connected: ${server.connected}, host: ${server.host}, port: ${server.port}');
 
-class _AppState extends State<App> {
-  Server? _server;
-  final List<String> _stream = [];
+    final sendController = TextEditingController();
 
-  @override
-  Widget build(BuildContext context) {
-    var connected = (_server != null && _server!.connected);
-    log('connected = $connected');
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.amber),
-          useMaterial3: true),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.amber),
+        useMaterial3: true,
+      ),
       title: "Nautilus",
       home: Scaffold(
         appBar: AppBar(
           centerTitle: true,
           title: const Text('Nautilus'),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: !server.connected
+                  ? Container()
+                  : ElevatedButton.icon(
+                      onPressed: () async =>
+                          await ref.watch(serverProvider.notifier).disconnect(),
+                      icon: const Icon(Icons.offline_bolt_rounded),
+                      label: const Text('Disconnect'),
+                    ),
+            )
+          ],
         ),
-        body: !connected
-            ? ConnectServer(
-                onConnect: (server) {
-                  setState(() {
-                    _server = server;
-                  });
-                },
-              )
-            : Console(
-                server: _server!,
-                onDisconnect: () {
-                  if (_server == null) {
-                    return;
-                  }
-                  _server!.disconnect();
-                  setState(() {
-                    _server = null;
-                  });
-                },
+        body: !server.connected
+            ? ConnectServer(ref)
+            : Column(
+                children: [
+                  const Expanded(
+                    flex: 3,
+                    child: ServerStream(),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: TextField(
+                        controller: sendController,
+                        autofocus: true,
+                        onSubmitted: (value) {
+                          sendController.clear();
+                          ref.watch(serverProvider.notifier).send(value);
+                        },
+                      ),
+                    ),
+                  )
+                ],
               ),
       ),
     );
@@ -56,10 +70,9 @@ class _AppState extends State<App> {
 }
 
 class ConnectServer extends StatefulWidget {
-  const ConnectServer({Function(Server)? onConnect, super.key})
-      : _onConnect = onConnect;
+  const ConnectServer(this.ref, {super.key});
 
-  final Function(Server)? _onConnect;
+  final WidgetRef ref;
 
   @override
   State<StatefulWidget> createState() => _ConnectServerState();
@@ -70,11 +83,11 @@ class _ConnectServerState extends State<ConnectServer> {
   int _port = 3030;
 
   connect() async {
-    var server = Server(host: _host, port: _port);
-    await server.connect();
-    if (widget._onConnect != null) {
-      widget._onConnect!(server);
-    }
+    widget.ref.watch(serverProvider.notifier)
+      ..host = _host
+      ..port = _port;
+    await widget.ref.watch(serverProvider.notifier).connect();
+    widget.ref.invalidate(serverProvider);
   }
 
   @override
@@ -137,66 +150,6 @@ class _ConnectServerState extends State<ConnectServer> {
           ],
         ),
       ),
-    );
-  }
-}
-
-class Console extends StatefulWidget {
-  const Console({required Server server, Function()? onDisconnect, super.key})
-      : _server = server,
-        _onDisconnect = onDisconnect;
-
-  final Server _server;
-  final Function()? _onDisconnect;
-
-  @override
-  State<StatefulWidget> createState() => _ConsoleState();
-}
-
-class _ConsoleState extends State<Console> {
-  final List<Widget> _messages = [];
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder(
-      stream: widget._server.stream(),
-      builder: (context, snapshot) {
-        var messages = [..._messages];
-        if (snapshot.hasData) {
-          var message = String.fromCharCodes(snapshot.data! as Uint8List);
-          messages.add(Text(message));
-          log('incoming stream data: $message');
-        }
-        return Column(
-          children: [
-            Expanded(
-              flex: 3,
-              child: ListView(
-                children: messages,
-              ),
-            ),
-            const Expanded(
-              flex: 1,
-              child: Padding(
-                padding: EdgeInsets.all(8.0),
-                child: TextField(
-                  autofocus: true,
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: ElevatedButton(
-                  onPressed: () {
-                    if (widget._onDisconnect != null) {
-                      widget._onDisconnect!();
-                    }
-                  },
-                  child: const Text('Disconnect')),
-            )
-          ],
-        );
-      },
     );
   }
 }

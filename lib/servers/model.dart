@@ -1,48 +1,79 @@
+import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 
-class Server {
-  Server({required String host, required int port}) : _host = host, _port = port;
+part 'model.g.dart';
 
-  final String _host;
-  final int _port;
-  Socket? _socket;
+@riverpod
+class Server extends _$Server {
+  Server();
+  Server.withOptions({required this.host, required this.port});
 
-  get host => _host;
-  get port => _port;
-  get connected => _socket != null;
+  String host = '';
+  int port = 0;
+  Socket? socket;
+  final List<String> messages = [];
+
+  get connected => socket != null;
+
+  @override
+  Stream<List<String>> build() async* {
+    if (socket != null) {
+      final stream = socket!.asBroadcastStream(
+        onCancel: (subscription) {
+          log('stream cancelled');
+          subscription.cancel();
+          socket = null;
+        },
+      );
+      await for (var data in stream) {
+        messages.add(utf8.decode(data));
+        yield messages;
+      }
+    }
+  }
 
   connect() async {
-    _socket = await Socket.connect(_host, _port);
-    _socket!.handleError((error) {log('socket error: $error');});
+    socket = await Socket.connect(host, port);
+    socket!.handleError((error) {
+      log('socket error: $error');
+      socket = null;
+    });
   }
 
   disconnect() async {
-    if (_socket != null) {
-      await _socket!.close();
-      _socket == null;
+    if (socket != null) {
+      messages.clear();
+      await socket!.close();
+      socket == null;
     }
-  }
-
-  stream() {
-    if (_socket == null) {
-      return;
-    }
-    return _socket!.asBroadcastStream();
-    // _socket!.asBroadcastStream().listen(
-    //   (event) {
-    //     var data = String.fromCharCodes(event);
-    //     log('incoming event: $data');
-    //   },
-    // );
   }
 
   send(String input) {
-    if (_socket == null) {
+    if (socket == null) {
       return;
     }
-    _socket!.write(input);
+    socket!.write('$input\n');
+  }
+}
+
+class ServerStream extends ConsumerWidget {
+  const ServerStream({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(serverProvider);
+    return Scaffold(
+        body: state.when(
+      data: (data) => ListView(
+        children: data.map((e) => Text(e)).toList(),
+      ),
+      error: (error, stackTrace) => Text(error.toString()),
+      loading: () => const CircularProgressIndicator(),
+    ));
   }
 }
